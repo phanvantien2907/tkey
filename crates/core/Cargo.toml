@@ -1,0 +1,17 @@
+[package]
+name        = "tkey-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Pure-Rust Pinyin (and future Vietnamese) IME engine – no OS dependencies"
+
+[lib]
+name = "tkey_core"
+
+# Zero runtime deps for the core engine.
+# thiserror added only if typed errors become complex enough – will ask first.
+[dependencies]
+
+[[example]]
+name = "repl"
+path = "examples/repl.rs"

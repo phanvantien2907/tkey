@@ -1,3 +1,6 @@
+# Rust build output
+target/
+
 # Logs
 logs
 *.log
