@@ -51,10 +51,15 @@ pub(crate) fn compute_display_tones(syllables: &[SyllableEntry], config: &Config
 
     let mut display_tones: Vec<u8> = syllables.iter().map(|s| s.tone).collect();
     let n = syllables.len();
+    let mut locked_idx = vec![false; n];
 
     // 1. Lexicon and word-level exception matching (forward maximum match)
     let lex = get_lexicon();
-    let blk = get_blocklist();
+    let blk = if config.sandhi_blocklist {
+        Some(get_blocklist())
+    } else {
+        None
+    };
 
     let mut i = 0;
     while i < n {
@@ -67,9 +72,12 @@ pub(crate) fn compute_display_tones(syllables: &[SyllableEntry], config: &Config
                 .map(|idx| format!("{}{}", syllables[idx].raw_lower, syllables[idx].tone))
                 .collect();
 
-            // Check blocklist first
-            if blk.contains(key.as_str()) {
-                // Blocked from sandhi: keep citation tones
+            // Check blocklist first (only if sandhi_blocklist is enabled)
+            if let Some(b) = blk
+                && b.contains(key.as_str())
+            {
+                // Blocked from sandhi: keep citation tones and lock them
+                locked_idx[i..i + len].fill(true);
                 i += len;
                 matched = true;
                 break;
@@ -81,6 +89,7 @@ pub(crate) fn compute_display_tones(syllables: &[SyllableEntry], config: &Config
             {
                 for (offset, t) in tones.into_iter().enumerate() {
                     display_tones[i + offset] = t;
+                    locked_idx[i + offset] = true;
                 }
                 i += len;
                 matched = true;
@@ -93,8 +102,12 @@ pub(crate) fn compute_display_tones(syllables: &[SyllableEntry], config: &Config
         }
     }
 
-    // 2. Generic 不 and 一 rules for syllables not blocked
+    // 2. Generic 不 and 一 rules for syllables not locked
     for idx in 0..n {
+        if locked_idx[idx] {
+            continue;
+        }
+
         let is_bu = syllables[idx].raw_lower == "bu" && syllables[idx].tone == 4;
         let is_yi = syllables[idx].raw_lower == "yi" && syllables[idx].tone == 1;
 
@@ -104,7 +117,11 @@ pub(crate) fn compute_display_tones(syllables: &[SyllableEntry], config: &Config
                 syllables[idx + 1].raw_lower,
                 syllables[idx + 1].tone
             );
-            if !blk.contains(pair_key.as_str()) {
+            let blocked = match blk {
+                Some(b) => b.contains(pair_key.as_str()),
+                None => false,
+            };
+            if !blocked {
                 let is_x_bu_x = idx > 0
                     && idx + 1 < n
                     && syllables[idx - 1].raw_lower == syllables[idx + 1].raw_lower;
@@ -128,7 +145,11 @@ pub(crate) fn compute_display_tones(syllables: &[SyllableEntry], config: &Config
                     syllables[idx + 1].raw_lower,
                     syllables[idx + 1].tone
                 );
-                if !blk.contains(pair_key.as_str()) {
+                let blocked = match blk {
+                    Some(b) => b.contains(pair_key.as_str()),
+                    None => false,
+                };
+                if !blocked {
                     let is_ordinal = idx > 0
                         && syllables[idx - 1].raw_lower == "di"
                         && syllables[idx - 1].tone == 4;

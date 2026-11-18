@@ -22,17 +22,7 @@ fn feed_and_commit(input: &str) -> String {
 
 fn feed_and_commit_cfg(input: &str, cfg: Config) -> String {
     let mut e = Engine::new(cfg);
-    let mut result = String::new();
-    for ch in input.chars() {
-        let out = e.feed(ch);
-        result.push_str(&out.commit);
-        if !out.handled {
-            result.push(ch);
-        }
-    }
-    let final_out = e.commit();
-    result.push_str(&final_out.commit);
-    result
+    e.feed_and_commit(input)
 }
 
 /// Parse the golden CSV into a HashMap<input, expected_nfc>.

@@ -169,6 +169,46 @@ impl Engine {
         self.reset_internal();
     }
 
+    /// Current preedit string in composition (empty if not composing).
+    pub fn preedit(&self) -> &str {
+        &self.preedit_buf
+    }
+
+    /// Feed a string of characters sequentially to the engine.
+    ///
+    /// Handles backspace characters (`'\x08'`) and regular keystrokes.
+    /// Builds the committed text in exact chronological order from:
+    /// 1. Committed text from engine outputs (`out.commit`).
+    /// 2. Any typed characters that the engine leaves untouched (`!out.handled`).
+    ///
+    /// Returns `(committed, preedit)`:
+    /// - `committed`: All text committed during this feed sequence, plus unhandled characters.
+    /// - `preedit`: The composition text remaining in the buffer (empty if not composing).
+    pub fn feed_str(&mut self, s: &str) -> (String, String) {
+        let mut committed = String::new();
+        for ch in s.chars() {
+            let out = match ch {
+                '\x08' => self.backspace(),
+                _ => self.feed(ch),
+            };
+            committed.push_str(&out.commit);
+            if !out.handled {
+                committed.push(ch);
+            }
+        }
+        (committed, self.preedit().to_string())
+    }
+
+    /// Feed a string and commit any remaining composition at the end.
+    ///
+    /// Returns the complete committed text as a single [`String`].
+    pub fn feed_and_commit(&mut self, s: &str) -> String {
+        let (mut text, _) = self.feed_str(s);
+        let out = self.commit();
+        text.push_str(&out.commit);
+        text
+    }
+
     // ── Private helpers ─────────────────────────────────────────────────────
 
     fn feed_idle(&mut self, ch: char) -> Output {
@@ -388,7 +428,7 @@ impl Engine {
     }
 
     fn feed_passthrough(&mut self, ch: char) -> Output {
-        if ch.is_whitespace() || (ch.is_ascii_punctuation() && ch != '\'') {
+        if is_commit_trigger_whitespace(ch) || (ch.is_ascii_punctuation() && ch != '\'') {
             self.state = State::Idle;
         }
         Output::pass_through()
@@ -472,7 +512,14 @@ enum CharClass {
     Other,
 }
 
+fn is_commit_trigger_whitespace(ch: char) -> bool {
+    ch.is_whitespace() || ch == '\u{200B}' || ch == '\u{FEFF}'
+}
+
 fn classify(ch: char) -> CharClass {
+    if is_commit_trigger_whitespace(ch) {
+        return CharClass::CommitTrigger;
+    }
     match ch {
         'a'..='z' | 'A'..='Z' | 'ê' | 'Ê' | 'ü' | 'Ü' => CharClass::Letter,
         '\'' => CharClass::Apostrophe,
@@ -482,7 +529,6 @@ fn classify(ch: char) -> CharClass {
         '3' => CharClass::ToneDigit(3),
         '4' => CharClass::ToneDigit(4),
         '5' | '0' => CharClass::ToneDigit(5),
-        ' ' | '\n' | '\r' | '\t' => CharClass::CommitTrigger,
         _ => CharClass::Other,
     }
 }

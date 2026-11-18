@@ -141,6 +141,8 @@ def main():
     explicit_blocklist = [
         ("bu4dui4", "部队", 12400),
         ("yi1fu2", "衣服", 5052),
+        ("bu4zhi4", "布置", 846),
+        ("bu4zhou4", "步骤", 854),
     ]
     for k, w, f in explicit_blocklist:
         blocklist_entries[k] = (w, f)

@@ -30,6 +30,36 @@ pub use config::{Config, ToneSandhi};
 pub use engine::Engine;
 pub use output::Output;
 
+/// Feed a string of characters into an engine, returning `(committed, preedit)`.
+///
+/// Builds committed text from both engine commits and unhandled characters (`!handled`).
+///
+/// # Examples
+/// ```
+/// use tkey_core::{Engine, Config, feed_str};
+/// let mut e = Engine::new(Config::default());
+/// let (committed, preedit) = feed_str(&mut e, "wo1   zhong1guo2");
+/// assert_eq!(committed, "wō   ");
+/// assert_eq!(preedit, "zhōngguó");
+/// ```
+pub fn feed_str(engine: &mut Engine, s: &str) -> (String, String) {
+    engine.feed_str(s)
+}
+
+/// Feed a string of characters into an engine and commit any remaining composition.
+///
+/// Returns the full text committed.
+///
+/// # Examples
+/// ```
+/// use tkey_core::{Engine, Config, feed_and_commit};
+/// let mut e = Engine::new(Config::default());
+/// assert_eq!(feed_and_commit(&mut e, "wo1   zhong1guo2"), "wō   zhōngguó");
+/// ```
+pub fn feed_and_commit(engine: &mut Engine, s: &str) -> String {
+    engine.feed_and_commit(s)
+}
+
 /// Segments a toneless lowercase Pinyin string into valid syllables using greedy longest match.
 ///
 /// Apostrophes force an explicit syllable split (e.g. `"xi'an"` -> `["xi", "an"]`).

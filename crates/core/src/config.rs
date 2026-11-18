@@ -38,5 +38,9 @@ pub struct Config {
     pub syllable_separator: String,
     /// Tone sandhi behavior.
     pub tone_sandhi: ToneSandhi,
+    /// When `true`, consult `sandhi_blocklist.tsv` to prevent tone sandhi
+    /// on words like 部队 (bùduì) and 衣服 (yīfú).
+    /// Default `false` (tone sandhi rule always fires for citation tones).
+    pub sandhi_blocklist: bool,
     // Future: pub shortcuts: Arc<ShortcutTable>,
 }
