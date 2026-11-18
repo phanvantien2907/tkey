@@ -1,0 +1,42 @@
+typed	sandhi_off	sandhi_on	note
+ni3hao3	nǐhǎo	níhǎo	3+3 sandhi
+ni2hao3	níhǎo	níhǎo	typed sandhi form is kept (idempotent)
+lao3shu3	lǎoshǔ	láoshǔ	3+3
+hen3hao3	hěnhǎo	hénhǎo	3+3
+shui3guo3	shuǐguǒ	shuíguǒ	3+3
+ke3yi3	kěyǐ	kéyǐ	3+3
+wo3ye3	wǒyě	wóyě	3+3
+wu3bai3	wǔbǎi	wúbǎi	3+3
+zhan3lan3guan3	zhǎnlǎnguǎn	zhánlánguǎn	3+3+3: all but last become 2nd tone (simplified rule)
+wo3xiang3mai3	wǒxiǎngmǎi	wóxiángmǎi	3+3+3 simplified
+jie3jie5	jiějie	jiějie	3 then neutral: no sandhi
+ni3 hao3	nǐ hǎo	nǐ hǎo	Space is a phrase boundary: no sandhi across it
+bu4yao4	bùyào	búyào	不 before tone 4
+bu4shi4	bùshì	búshì	不 before tone 4
+bu4yong4	bùyòng	búyòng	不 before tone 4
+bu4qu4	bùqù	búqù	不 before tone 4
+bu4fu4	bùfù	búfù	example from the user
+bu4hao3	bùhǎo	bùhǎo	不 before non-4: unchanged
+bu4chi1	bùchī	bùchī	unchanged
+bu4lai2	bùlái	bùlái	unchanged
+hao3bu4hao3	hǎobùhǎo	hǎobuhǎo	X不X: neutral tone
+bu4dui4	bùduì	bùduì	POLICY CASE: 部队 (freq 12400) is far more frequent than 不对 (695); lexicon blocklist keeps bù. To force 不对 the user types bu2dui4
+bu2dui4	búduì	búduì	explicit sandhi typing always wins
+yi1ge4	yīgè	yígè	一 before tone 4 -> 2nd
+yi1ding4	yīdìng	yídìng	一 before tone 4 -> 2nd
+yi1tian1	yītiān	yìtiān	一 before tone 1/2/3 -> 4th
+yi1nian2	yīnián	yìnián	一 before tone 2 -> 4th
+yi1qi3	yīqǐ	yìqǐ	一 before tone 3 -> 4th
+yi1ban1	yībān	yìbān	一 before tone 1 -> 4th
+di4yi1	dìyī	dìyī	ordinal / word-final: stays 1st
+di4yi1ming2	dìyīmíng	dìyīmíng	ordinal 第一 keeps yī even before tone 2
+shi2yi1	shíyī	shíyī	number 十一: stays 1st
+kan4yi1kan4	kànyīkàn	kànyikàn	V一V: neutral tone
+yi1fu2	yīfú	yīfú	衣服: yī is NOT 一, lexicon exception blocks the rule
+di4er4	dìèr	dìèr	第二: er is a full syllable (bug fix)
+ou2er	óuer	óuer	no tone digit after er: stays raw (bug fix)
+ou3er3	ǒuěr	óuěr	偶尔 (3+3 only when sandhi on)
+dian3r	diǎnr	diǎnr	erhua typed with r
+dianr3	diǎnr	diǎnr	tone after r applies to the main syllable
+huar4	huàr	huàr	erhua
+nv3er2	nǚér	nǚér	two syllables, er keeps its own tone

@@ -28,6 +28,7 @@ enum State {
     #[default]
     Idle,
     Composing,
+    PassThrough,
 }
 
 /// Per-keystroke Pinyin engine.
@@ -57,34 +58,60 @@ pub struct Engine {
     syllables: Vec<SyllableEntry>,
     /// Pending char that could not be accepted (needs pass-through after flush).
     pending_passthrough: Option<char>,
+    /// Set to true when an apostrophe was just typed; next syllable gets has_apostrophe_before=true.
+    pending_apostrophe: bool,
 }
 
 #[derive(Debug, Clone)]
-struct SyllableEntry {
+pub(crate) struct SyllableEntry {
     /// Raw lowercase letters (ü-normalized) for this syllable.
-    raw_lower: String,
+    pub(crate) raw_lower: String,
     /// Original characters as typed by the user (preserves case and u: / v).
-    orig_chars: Vec<char>,
-    /// Applied tone (0 = none/neutral).
-    tone: u8,
+    pub(crate) orig_chars: Vec<char>,
+    /// Applied tone (0 = none, 1-4 = tone marks, 5 = neutral).
+    pub(crate) tone: u8,
     /// True if this syllable has erhua 'r'.
-    erhua: bool,
+    pub(crate) erhua: bool,
+    /// True when the erhua 'r' character was typed in uppercase ('R').
+    pub(crate) erhua_upper: bool,
+    /// True when this syllable was preceded by an apostrophe boundary ('xi'an').
+    pub(crate) has_apostrophe_before: bool,
 }
 
 impl SyllableEntry {
-    fn render(&self) -> String {
+    #[allow(dead_code)]
+    pub(crate) fn render(&self) -> String {
+        self.render_with_tone(self.tone)
+    }
+
+    pub(crate) fn render_with_tone(&self, tone: u8) -> String {
         let raw_orig: String = self.orig_chars.iter().collect();
-        let mut rendered = if self.tone > 0 {
-            apply_tone(&raw_orig, self.tone)
+        let mut rendered = if tone > 0 {
+            apply_tone(&raw_orig, tone)
         } else if raw_orig.contains('v') || raw_orig.contains('V') || raw_orig.contains(':') {
             apply_tone(&raw_orig, 0)
         } else {
             raw_orig
         };
         if self.erhua {
-            rendered.push('r');
+            rendered.push(if self.erhua_upper { 'R' } else { 'r' });
         }
         rendered
+    }
+
+    pub(crate) fn new(
+        raw_lower: String,
+        orig_chars: Vec<char>,
+        has_apostrophe_before: bool,
+    ) -> Self {
+        Self {
+            raw_lower,
+            orig_chars,
+            tone: 0,
+            erhua: false,
+            erhua_upper: false,
+            has_apostrophe_before,
+        }
     }
 }
 
@@ -98,6 +125,7 @@ impl Engine {
             preedit_buf: String::new(),
             syllables: Vec::new(),
             pending_passthrough: None,
+            pending_apostrophe: false,
         }
     }
 
@@ -108,13 +136,14 @@ impl Engine {
         match self.state {
             State::Idle => self.feed_idle(ch),
             State::Composing => self.feed_composing(ch),
+            State::PassThrough => self.feed_passthrough(ch),
         }
     }
 
     /// Process a Backspace key.
     pub fn backspace(&mut self) -> Output {
         match self.state {
-            State::Idle => Output::pass_through(),
+            State::Idle | State::PassThrough => Output::pass_through(),
             State::Composing => self.backspace_composing(),
         }
     }
@@ -147,12 +176,7 @@ impl Engine {
             let lc = char_to_lower_normalized(ch);
             if is_valid_prefix(&lc.to_string()) {
                 self.state = State::Composing;
-                let entry = SyllableEntry {
-                    raw_lower: lc.to_string(),
-                    orig_chars: vec![ch],
-                    tone: 0,
-                    erhua: false,
-                };
+                let entry = SyllableEntry::new(lc.to_string(), vec![ch], false);
                 self.syllables.push(entry);
                 self.raw_buf.push(ch);
                 self.rebuild_preedit();
@@ -176,11 +200,17 @@ impl Engine {
             CharClass::Colon => self.accept_colon(ch),
             CharClass::ToneDigit(d) => self.accept_tone_digit(d, ch),
             CharClass::CommitTrigger => {
-                // Commit preedit, then pass-through the trigger char
+                // Commit preedit, then host handles the trigger key
                 let committed = self.preedit_buf.clone();
                 self.reset_internal();
                 let mut out = Output::commit_all(committed);
-                out.handled = true; // we handle Space ourselves
+                if ch == '\n' || ch == '\r' {
+                    // Enter while composing commits and is consumed
+                    out.handled = true;
+                } else {
+                    // Space, Tab, etc. commit the buffer, then the key is inserted by host
+                    out.handled = false;
+                }
                 out
             }
             CharClass::Other => {
@@ -194,8 +224,36 @@ impl Engine {
     fn accept_letter_composing(&mut self, ch: char) -> Output {
         let lc = char_to_lower_normalized(ch);
 
+        // Handle apostrophe: forces a syllable boundary.
+        if ch == '\'' && !self.syllables.is_empty() {
+            self.raw_buf.push('\'');
+            self.pending_apostrophe = true;
+            return Output::preedit_only(self.preedit_buf.clone());
+        }
+
+        // If the last syllable currently has erhua 'r', but now a letter arrives:
+        // "An r followed by a vowel starts a new syllable (dianran -> dian + ran)."
+        if let Some(last) = self.syllables.last_mut()
+            && last.erhua
+        {
+            let candidate = format!("r{lc}");
+            if is_valid_prefix(&candidate) {
+                let r_char = if last.erhua_upper { 'R' } else { 'r' };
+                last.erhua = false;
+                last.erhua_upper = false;
+                let entry = SyllableEntry::new(candidate, vec![r_char, ch], false);
+                self.syllables.push(entry);
+                self.raw_buf.push(ch);
+                self.rebuild_preedit();
+                return Output::preedit_only(self.preedit_buf.clone());
+            }
+        }
+
         // 1. Can we extend the current syllable?
-        let can_extend = if let Some(last) = self.syllables.last() {
+        let can_extend = if self.pending_apostrophe {
+            // After an apostrophe, never extend: always start a new syllable.
+            false
+        } else if let Some(last) = self.syllables.last() {
             if last.tone > 0 || last.erhua {
                 false
             } else {
@@ -215,11 +273,13 @@ impl Engine {
             return Output::preedit_only(self.preedit_buf.clone());
         }
 
-        // 2. Can ch be erhua 'r'?
+        // 2. Can ch be bare erhua 'r' after valid/toned syllable?
+        //    (huar4 → huàr, dian3r → diǎnr, dianr3 → diǎnr)
         if lc == 'r' && !self.syllables.is_empty() {
             let last = self.syllables.last_mut().unwrap();
             if !last.erhua && (last.tone > 0 || is_valid_syllable(&last.raw_lower)) {
                 last.erhua = true;
+                last.erhua_upper = ch.is_uppercase();
                 self.raw_buf.push(ch);
                 self.rebuild_preedit();
                 return Output::preedit_only(self.preedit_buf.clone());
@@ -227,37 +287,31 @@ impl Engine {
         }
 
         // 3. Can we start a new syllable?
-        let can_start_new = if let Some(last) = self.syllables.last() {
+        let apostrophe_before = self.pending_apostrophe;
+        let can_start_new = if apostrophe_before {
+            // After an apostrophe, force a new syllable if lc is a valid start.
+            is_valid_prefix(&lc.to_string())
+        } else if let Some(last) = self.syllables.last() {
             let last_has_vowel = last
                 .raw_lower
                 .chars()
                 .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'ü' | 'ê'));
-            (last.tone > 0 || (is_valid_syllable(&last.raw_lower) && last_has_vowel))
+            (last.tone > 0 || last.erhua || (is_valid_syllable(&last.raw_lower) && last_has_vowel))
                 && is_valid_prefix(&lc.to_string())
         } else {
             is_valid_prefix(&lc.to_string())
         };
 
         if can_start_new {
-            let entry = SyllableEntry {
-                raw_lower: lc.to_string(),
-                orig_chars: vec![ch],
-                tone: 0,
-                erhua: false,
-            };
+            self.pending_apostrophe = false;
+            let entry = SyllableEntry::new(lc.to_string(), vec![ch], apostrophe_before);
             self.syllables.push(entry);
             self.raw_buf.push(ch);
             self.rebuild_preedit();
             return Output::preedit_only(self.preedit_buf.clone());
         }
 
-        // 4. Apostrophe: if ch == '\'', it forces a boundary
-        if ch == '\'' && !self.syllables.is_empty() {
-            self.raw_buf.push('\'');
-            return Output::preedit_only(self.preedit_buf.clone());
-        }
-
-        // 5. Neither extending nor starting new syllable is valid -> flush
+        // 4. Neither extending nor starting new syllable is valid → flush
         self.flush_raw_and_passthrough(ch)
     }
 
@@ -278,42 +332,66 @@ impl Engine {
     }
 
     /// Accept a tone digit while composing.
-    fn accept_tone_digit(&mut self, digit: u8, _ch: char) -> Output {
+    fn accept_tone_digit(&mut self, digit: u8, ch: char) -> Output {
         if self.syllables.is_empty() {
-            return self.flush_raw_and_passthrough(_ch);
+            return self.flush_raw_and_passthrough(ch);
         }
 
-        // Apply tone to the last recognized syllable
-        let last = self.syllables.last_mut();
-        if let Some(entry) = last {
-            entry.tone = digit;
+        let is_valid = if let Some(last) = self.syllables.last() {
+            is_valid_syllable(&last.raw_lower) || last.erhua
+        } else {
+            false
+        };
+
+        if is_valid {
+            let last = self.syllables.last_mut().unwrap();
+            last.tone = digit;
             self.rebuild_preedit();
             Output::preedit_only(self.preedit_buf.clone())
         } else {
-            self.flush_raw_and_passthrough(_ch)
+            // Digit does not follow a valid syllable (e.g. h2o, mp3)
+            self.flush_raw_and_passthrough(ch)
         }
     }
 
     /// Rebuild `preedit_buf` from `syllables`.
+    /// Apostrophe boundaries are preserved between syllables when `has_apostrophe_before` is set.
+    /// Display tones are derived via sandhi rules when configured.
     fn rebuild_preedit(&mut self) {
         let sep = &self.config.syllable_separator;
-        self.preedit_buf = self
-            .syllables
-            .iter()
-            .map(|e| e.render())
-            .collect::<Vec<_>>()
-            .join(sep);
+        let display_tones = crate::sandhi::compute_display_tones(&self.syllables, &self.config);
+        let mut result = String::new();
+        for (i, entry) in self.syllables.iter().enumerate() {
+            if i > 0 {
+                if entry.has_apostrophe_before {
+                    result.push('\'');
+                } else {
+                    result.push_str(sep);
+                }
+            }
+            let tone = display_tones.get(i).copied().unwrap_or(entry.tone);
+            result.push_str(&entry.render_with_tone(tone));
+        }
+        self.preedit_buf = result;
     }
 
-    /// Flush the raw buffer as committed text, then pass `_next_ch` through.
+    /// Flush the raw buffer as committed text, transition to PassThrough, then pass `_next_ch` through.
     fn flush_raw_and_passthrough(&mut self, _next_ch: char) -> Output {
         let raw = self.raw_buf.clone();
         self.reset_internal();
+        self.state = State::PassThrough;
         Output {
             commit: raw,
             preedit: String::new(),
             handled: false,
         }
+    }
+
+    fn feed_passthrough(&mut self, ch: char) -> Output {
+        if ch.is_whitespace() || (ch.is_ascii_punctuation() && ch != '\'') {
+            self.state = State::Idle;
+        }
+        Output::pass_through()
     }
 
     fn backspace_composing(&mut self) -> Output {
@@ -330,8 +408,9 @@ impl Engine {
         // Pop from syllables
         if let Some(last) = self.syllables.last_mut() {
             if last.erhua {
-                // Remove erhua first
+                // Bare erhua 'r': remove erhua and pop 'r'
                 last.erhua = false;
+                last.erhua_upper = false;
                 self.raw_buf.pop();
                 self.rebuild_preedit();
                 return Output::preedit_only(self.preedit_buf.clone());
@@ -377,6 +456,7 @@ impl Engine {
         self.preedit_buf.clear();
         self.syllables.clear();
         self.pending_passthrough = None;
+        self.pending_apostrophe = false;
     }
 }
 
@@ -394,21 +474,21 @@ enum CharClass {
 
 fn classify(ch: char) -> CharClass {
     match ch {
-        'a'..='z' | 'A'..='Z' => CharClass::Letter,
+        'a'..='z' | 'A'..='Z' | 'ê' | 'Ê' | 'ü' | 'Ü' => CharClass::Letter,
         '\'' => CharClass::Apostrophe,
         ':' => CharClass::Colon,
         '1' => CharClass::ToneDigit(1),
         '2' => CharClass::ToneDigit(2),
         '3' => CharClass::ToneDigit(3),
         '4' => CharClass::ToneDigit(4),
-        '5' | '0' => CharClass::ToneDigit(0),
+        '5' | '0' => CharClass::ToneDigit(5),
         ' ' | '\n' | '\r' | '\t' => CharClass::CommitTrigger,
         _ => CharClass::Other,
     }
 }
 
 fn is_composable_start(ch: char) -> bool {
-    ch.is_ascii_alphabetic()
+    ch.is_ascii_alphabetic() || ch == 'ê' || ch == 'Ê' || ch == 'ü' || ch == 'Ü'
 }
 
 fn char_to_lower_normalized(ch: char) -> char {

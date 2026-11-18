@@ -21,11 +21,12 @@ pub mod config;
 pub mod output;
 
 mod engine;
+mod sandhi;
 mod syllable;
 mod tone;
 mod unicode;
 
-pub use config::Config;
+pub use config::{Config, ToneSandhi};
 pub use engine::Engine;
 pub use output::Output;
 

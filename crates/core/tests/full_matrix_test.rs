@@ -10,10 +10,17 @@ use tkey_core::{Config, Engine, apply_pinyin_tone, segment_pinyin};
 
 fn feed_and_commit(input: &str) -> String {
     let mut e = Engine::new(Config::default());
+    let mut result = String::new();
     for ch in input.chars() {
-        e.feed(ch);
+        let out = e.feed(ch);
+        result.push_str(&out.commit);
+        if !out.handled {
+            result.push(ch);
+        }
     }
-    e.commit().commit
+    let final_out = e.commit();
+    result.push_str(&final_out.commit);
+    result
 }
 
 #[test]
@@ -554,4 +561,79 @@ fn test_apply_pinyin_tone_public_api() {
     assert_eq!(apply_pinyin_tone("hao", 3), "hǎo");
     assert_eq!(apply_pinyin_tone("lv", 4), "lǜ");
     assert_eq!(apply_pinyin_tone("xue", 2), "xué");
+}
+
+#[test]
+fn test_erhua_table_driven() {
+    let cases = [
+        ("di4er4", "dìèr"),
+        ("ou3er3", "ǒuěr"),
+        ("nv3er2", "nǚér"),
+        ("er2", "ér"),
+        ("ou2er", "óuer"),
+        ("huar4", "huàr"),
+        ("dian3r", "diǎnr"),
+        ("dianr3", "diǎnr"),
+        ("xian1", "xiān"),
+        ("xi'an1", "xi'ān"),
+        ("DIAN3R", "DIǍNR"),
+        ("HUAR4", "HUÀR"),
+        ("dianran", "dianran"),
+    ];
+
+    for (input, expected) in cases {
+        let actual = feed_and_commit(input);
+        assert_eq!(
+            actual, expected,
+            "Input: {input:?} → got {actual:?}, expected {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn test_erhua_live_preedit_and_backspace_undo() {
+    let mut e = Engine::new(Config::default());
+    for ch in "dian3".chars() {
+        e.feed(ch);
+    }
+    assert_eq!(e.feed('r').preedit, "diǎnr", "dian3 + r shows diǎnr");
+
+    // Backspace undo 1: reverts to "diǎn"
+    let out_bs1 = e.backspace();
+    assert_eq!(out_bs1.preedit, "diǎn", "backspace once reverts to diǎn");
+
+    // Backspace undo 2: reverts to "dian"
+    let out_bs2 = e.backspace();
+    assert_eq!(out_bs2.preedit, "dian", "backspace twice reverts to dian");
+}
+
+#[test]
+fn test_umlaut_exact_codepoints() {
+    let out_nv3 = feed_and_commit("nv3");
+    assert_eq!(
+        out_nv3.chars().collect::<Vec<_>>(),
+        vec!['n', '\u{01da}'],
+        "nv3 must be precomposed ǚ (U+01DA)"
+    );
+    assert!(
+        !out_nv3.contains('\u{030c}'),
+        "nv3 must not contain combining caron U+030C"
+    );
+
+    let out_lv4 = feed_and_commit("lv4");
+    assert_eq!(
+        out_lv4.chars().collect::<Vec<_>>(),
+        vec!['l', '\u{01dc}'],
+        "lv4 must be precomposed ǜ (U+01DC)"
+    );
+
+    let out_nv3_upper = feed_and_commit("NV3");
+    assert_eq!(
+        out_nv3_upper.chars().collect::<Vec<_>>(),
+        vec!['N', '\u{01d9}'],
+        "NV3 must be uppercase Ǚ (U+01D9)"
+    );
+
+    assert_eq!(feed_and_commit("lv3you2"), "lǚyóu");
+    assert_eq!(feed_and_commit("mei2nv3"), "méinǚ");
 }
